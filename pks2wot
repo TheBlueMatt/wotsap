@@ -713,9 +713,9 @@ def main(argv):
         print "           Feed pksclient with eight instead of sixteen digit KeyIDs."
         print "           Needed for older versions of pks. Newer versions ignore"
         print "           higher bits anyway."
-        print " --startkeys=0x0123456789ABCDEF,0XFEDCBA9876543210"
+        print " --startkeys=0x89BBB8663E2E65CE"
         print "           A comma-separated list of 16-digit KeyIDs in the largest"
-        print "           strongly connected set to start from. Defaults to four"
+        print "           strongly connected set to start from. Defaults to a key"
         print "           keys known to be in the set."
         print " --feedback=nnn"
         print "           Delay between feedbacks when fetching signatures."
@@ -753,9 +753,7 @@ def main(argv):
     (servername, pksdb, savefile) = args
 
     # Some keys in the strong set to start from.
-    startkeys  = ["0x013C5083E8C80C34",
-                  "0xA8D947F9ED9547ED",
-                  "0xA8919F49D23450F9"]
+    startkeys  = ["0x89BBB8663E2E65CE"]
     verify       = 1
     verbose      = None
     debugdump    = None
