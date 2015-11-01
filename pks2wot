@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # -*- coding: iso-8859-1 -*-
 
 # pks2wot, create .wot file from pks server.
@@ -247,17 +247,30 @@ def get_name_using_gpg(keyfile, tmpdir, gnupg='/usr/bin/gpg', verbose=0):
           % (gnupg, tmpdir, keyfile, v)
     reply = os.popen(cmd)
     name=keyid=None
+    lastpub=False
     for x in reply.xreadlines():
         y = splitcolons(x)
         if y[0] == "pub":
-            name = y[9].strip()
+            if lastpub:
+                if verbose:
+                    print "Bailing out on line %r." % y
+                benchmark("stop",  "gpg: get name")
+                return None, None
             # Make sure we always use GPGs idea of keyid.
             keyid = "0x" + y[4]
             if y[1] != "":
-                benchmark("stop",  "gpg: get name")
                 if verbose:
                     print "Bailing out on line %r." % y
+                benchmark("stop",  "gpg: get name")
                 return None, None
+            lastpub=True
+        elif lastpub:
+            if y[0] != "uid":
+                if verbose:
+                    print "Bailing out on line %r." % y
+                benchmark("stop",  "gpg: get name")
+                return None, None
+            name = y[9].strip()
             break
     benchmark("stop",  "gpg: get name")
     if not isvalidkeyid(keyid):
@@ -513,7 +526,7 @@ def getwot(startkeys, getkeyfunc, getkeyarg, verbose, slow=0, printevery=100,
                     
             ret = getkeyfunc(getkeyarg, key, tmpdir, verbose)
             if verbose:
-                print "getkeyfunc returned %r." % ret
+                print "getkeyfunc returned %r." % str(ret)
     
             # Don't bother with broken and unsigned keys
             if not ret:
