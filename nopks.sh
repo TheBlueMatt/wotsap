@@ -1,6 +1,6 @@
 #!/bin/bash
 
-STORAGE_DIR="/home/matt/"
+STORAGE_DIR="/tmp/"
 mkdir -p "$STORAGE_DIR/allkeys"
 
 SCRIPTDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
