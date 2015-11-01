@@ -21,9 +21,8 @@ Webware-Main.py:
 
 pks2wot:
 
-  A program to create .wot files using the pksclient program. You need
-  a local pks keyserver to use it. It should be fairly easy to adopt
-  it to client programs for other keyservers.
+  A program to create .wot files. You probably want to use nopks.sh
+  for the pksclient.
 
 wotfileformat.txt:
 
