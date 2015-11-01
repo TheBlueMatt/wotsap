@@ -5,6 +5,7 @@
 # http://www.lysator.liu.se/~jc/wotsap/
 # Copyright (C) 2003,2004  Jörgen Cederlöf <jc@lysator.liu.se>
 # modified 2004 by Marco Bodrato <gpg@bodrato.it> ("wanted sigs")
+# modified 2015 by Matt Corallo
 # 
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -57,7 +58,7 @@ def __tmp(): yield \
     '*********** Too old Python. You need at least version 2.2.0. ***********'
 del __tmp
 
-VERSION="0.7"
+VERSION="0.8"
 
 defaultconfig = {
     "size":     (980, 700),
@@ -582,32 +583,72 @@ def __findnext_nomod_nogetconns(keys, web, forbiddenkeys=None):
             conn1[x] = None
     return conn1
             
+def mergewebs(webs):
+    sigs = {}
+    levels = []
+    for web in webs:
+        while len(web) > len(levels):
+            levels.insert(0, [])
+        for i, level in enumerate(web):
+            for signer in level:
+                if level[signer] is None:
+                    if signer not in levels[i]:
+                        levels[i + (len(levels) - len(web))].append(signer)
+                    continue
 
-def findpaths(wot, bottom, top, mod):
-    """Find all paths in wot from bottom to top"""
-    if bottom == top:
-        return [{bottom: None}]
-    seen = {bottom: None}
-    conn = [{bottom: None}]
-    for lev in xrange(500):
-        conn.append(findnext(conn[lev], wot.sigs[UP], seen, mod, UP))
-        if top in conn[-1]:
-            # We got a match, but we also have lots of unneeded
-            # connections to irrelevant keys. We must trim down the
-            # web to just those paths leading to top. We do this by
-            # reversing the web and going from top to bottom, using
-            # this web. Since the modstring is already coded into the
-            # web, we need not use it again.
-            ret = [{top: None}]
-            conn.reverse()
-            conn.pop()
-            for w in conn:
-                ret.append( findnext(ret[-1], w))
-            return ret
-        if len(conn[-1]) == 0:
-            raise wotPathNotFoundError(bottom, top, mod)
-        seen.update(conn[-1])
-    raise wotPathNotFoundError(bottom, top, mod)
+                if signer not in sigs:
+                    sigs[signer] = {}
+                    levels[i + (len(levels) - len(web))].append(signer)
+
+                for signee in level[signer]:
+                    sigs[signer][signee] = level[signer][signee]
+
+    ret = []
+    for i in range(0, len(levels)):
+        level = {}
+        for key in levels[i]:
+            if key not in sigs:
+                level[key] = None
+            else:
+                level[key] = sigs[key]
+        ret.append(level)
+    return ret
+
+def findpaths(wot, bottom, tops, mod):
+    """Find all paths in wot from bottom to tops"""
+    reses = []
+    for top in tops:
+        if bottom == top:
+            reses.append([{bottom: None}])
+            continue
+        seen = {bottom: None}
+        conn = [{bottom: None}]
+        added = False
+        for lev in xrange(500):
+            conn.append(findnext(conn[lev], wot.sigs[UP], seen, mod, UP))
+            if top in conn[-1]:
+                # We got a match, but we also have lots of unneeded
+                # connections to irrelevant keys. We must trim down the
+                # web to just those paths leading to top. We do this by
+                # reversing the web and going from top to bottom, using
+                # this web. Since the modstring is already coded into the
+                # web, we need not use it again.
+                ret = [{top: None}]
+                conn.reverse()
+                conn.pop()
+                for w in conn:
+                    ret.append( findnext(ret[-1], w))
+                reses.append(ret)
+                added = True
+                break
+            if len(conn[-1]) == 0:
+                reses.append(wotPathNotFoundError(bottom, top, mod))
+                added = True
+                break
+            seen.update(conn[-1])
+        if not added:
+            reses.append(wotPathNotFoundError(bottom, top, mod))
+    return reses
 
 # This function is actually slightly slower than the real msd() now.
 def __msd_standalone(wot, key):
@@ -968,6 +1009,13 @@ def drawline(draw, x0, y0, x1, y1, config, certlevel=CL_unknown):
                     (x1+rot1[0], y1+rot1[1])],
                   outline=col_arrowb, fill=color)
 
+def getkeydesc(key, wot):
+    keystr = key2str(wot.keys[key])
+    # What charset should we use? It depends on font, of course.
+    name = wot.names[key].encode('iso-8859-15', 'replace')
+    lines = (keystr + '\n' + name.replace('<', '\n<')).split('\n', 2)
+    return lines
+
 def drawnode(draw, x, y, w, h, key, wot):
     """Draw a node (key) in a PIL object."""
     draw.rectangle( (x,y,x+w,y+h), fill=col_boxi, outline=col_boxb)
@@ -978,10 +1026,7 @@ def drawnode(draw, x, y, w, h, key, wot):
     if w<0:
         w=0
     h -= border*2
-    # What charset should we use? It depends on font, of course.
-    keystr = key2str(wot.keys[key])
-    name = wot.names[key].encode('iso-8859-15', 'replace')
-    lines = (keystr + '\n' + name.replace('<', '\n<')).split('\n', 2)
+    lines = getkeydesc(key, wot)
     sizes = []
     totalheight = 0
     for l in xrange(len(lines)):
@@ -1018,19 +1063,16 @@ def create_pil(web, keys, config, wot):
     draw = ImageDraw.Draw(im)
     levels = len(web)
     # Calculate widths. Proportional to
-    # number_of_links_up*number_of_links_down
-    widths    = [[size[0]/2]]
-    positions = [[size[0]/4]]
-    for level in xrange(1, levels-1):
-        numnodes = len(web[level])
-        lu = [0 for x in range(numnodes)]
-        ld = [0 for x in range(numnodes)]
-        for x in xrange(len(web[level])):
-            lu[x] = len(web[level][x])
-        for x in web[level+1]:
-            for y,certlevel in x:
-                ld[y] += 1
-        w = [ u*d for u,d in zip(lu, ld)]
+    # max text width
+    widths    = []
+    positions = []
+    for level in xrange(0, levels):
+        w = []
+        for x in xrange(len(keys[level])):
+            maxlen = 0
+            for line in getkeydesc(keys[level][x], wot):
+                maxlen = max(len(line), maxlen)
+            w.append(maxlen)
         tot = 0
         for x in w:
             tot += x
@@ -1051,8 +1093,6 @@ def create_pil(web, keys, config, wot):
             w[x] = int(w[x])
         widths.append(w)
         positions.append(p)
-    widths.append([size[0]/2])
-    positions.append([size[0]/4])
 
     # Edges
     for level in xrange(1, levels):
@@ -1072,7 +1112,7 @@ def create_pil(web, keys, config, wot):
                          conf, certlevel=certlevel)
     # Nodes
     for level in xrange(levels):
-        for xpos in xrange(len(web[level])):
+        for xpos in xrange(len(keys[level])):
             drawnode(draw,
                      positions[level][xpos],
                      yposition(level, levels, pos_top, boxh, size[1]),
@@ -1098,14 +1138,16 @@ def webtoordered(web):
             nodes = web[level].keys()
             nextlevellinks = []
             for x in web[level+1].values():
-                nextlevellinks.extend(x.keys())
+                if x is not None:
+                    nextlevellinks.extend(x.keys())
             center = (len(webkeys[level-1])-1) / 2.
             positions = []
             for node in nodes:
                 pos = 0.
-                for edgeto in web[level][node]:
-                    pos += webkeys[level-1].index(edgeto)-center
-                pos /= nextlevellinks.count(node)
+                if web[level][node] is not None:
+                    for edgeto in web[level][node]:
+                        pos += webkeys[level-1].index(edgeto)-center
+                    pos /= nextlevellinks.count(node)
                 positions.append(pos)
             sorted = positions[:]
             sorted.sort()
@@ -1117,9 +1159,13 @@ def webtoordered(web):
                 positions[index] = None
                 pos += 1
             webkeys.append(keys)
-            webarrw.append([   [ (webkeys[level-1].index(x), web[level][y][x])
-                                 for x in web[level][y]]
-                               for y in webkeys[level]])
+            append = []
+            for y in webkeys[level]:
+                if web[level][y] is not None:
+                    append.append([(webkeys[level-1].index(x), web[level][y][x]) for x in web[level][y]])
+                else:
+                    append.append([])
+            webarrw.append(append)
         else:
             webkeys.append(web[level].keys())
             webarrw.append([   [ (webkeys[level-1].index(x), web[level][y][x])
@@ -1559,16 +1605,19 @@ class Wot:
         else:
             raise ValueError
 
-    def findpaths(self, nbottom, ntop, modstr=None):
+    def findpaths(self, nbottom, ntops, modstr=None):
         bottom = nametokey(self, nbottom)
         if bottom is None:
             raise wotKeyNotFoundError(nbottom)
-        top    = nametokey(self, ntop   )
-        if top is None:
-            raise wotKeyNotFoundError(ntop)
+        tops = []
+        for ntop in ntops:
+            top = nametokey(self, ntop)
+            if top is None:
+                raise wotKeyNotFoundError(ntop)
+            tops.append(top)
         if modstr: mod = Mod(self, modstr)
         else: mod = None
-        return findpaths(self, bottom, top, mod=mod)
+        return findpaths(self, bottom, tops, mod=mod)
 
     def keystats(self, name, modstring=None, wanted=0, restrict=None, timer=None):
         key = nametokey(self, name)
@@ -1627,7 +1676,7 @@ def wotsapmain(argv):
         else:
             out = sys.stdout
         print >>out, (
-            u"Usage: %s [OPTION]... [bottomkey [topkey]]\n" \
+            u"Usage: %s [OPTION]... [bottomkey [topkey]*]\n" \
             u"\n" \
             u"Options:\n" \
             u"  -h, --help         Show help\n" \
@@ -1659,6 +1708,7 @@ def wotsapmain(argv):
             u"wotsap (Web of trust statistics and pathfinder) version %s\n" \
             u"\n" \
             u"Copyright (C) 2003,2004 Jörgen Cederlöf\n" \
+            u"Copyright (C) 2015 Matt Corallo\n" \
             u"\n"
             u"This is free software; see the source for copying conditions.  There is NO\n" \
             u"warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE." \
@@ -1744,11 +1794,11 @@ def wotsapmain(argv):
     top=bottom=None
     if   len(args)==1:
         top    = unicode(args[0], encoding, 'replace')
-    elif len(args)==2:
-        top    = unicode(args[1], encoding, 'replace')
+    elif len(args)>=2:
+        top = []
+        for i in range(1, len(args)):
+            top.append(unicode(args[i], encoding, 'replace'))
         bottom = unicode(args[0], encoding, 'replace')
-    elif len(args)>=3:
-        usage(1)
 
     try:
         wot = Wot(wotfile)
@@ -1788,7 +1838,7 @@ def wotsapmain(argv):
         sys.exit(0)
 
     if printmsd:
-        if not top:
+        if not top or type(top) == type([]):
             usage(2)
         keyn = nametokey(wot, top)
         if keyn is None:
@@ -1814,7 +1864,7 @@ def wotsapmain(argv):
         except wotLoadFileError, err:
             print unicode(err).encode(encoding, 'replace')
             sys.exit(1)
-        if top:
+        if top or type(top) == type([]):
             key = nametokey(wot, top)
             if key is not None:
                 key = wot.keys[key]
@@ -1842,7 +1892,11 @@ def wotsapmain(argv):
 
     if top and bottom:
         try:
-            web = wot.findpaths(bottom, top, modstr=modifystr)
+            webs = wot.findpaths(bottom, top, modstr=modifystr)
+            for web in webs:
+                if type(web) != type([]):
+                    raise web
+            web = mergewebs(webs)
         except (wotKeyNotFoundError, wotModstringError), err:
             print >>sys.stderr, unicode(err).encode(encoding, 'replace')
             sys.exit(2)
